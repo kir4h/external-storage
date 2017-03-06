@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 
+	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 )
@@ -39,7 +40,7 @@ type ProvisionPVCLock struct {
 func (pl *ProvisionPVCLock) Get() (*LeaderElectionRecord, error) {
 	var record LeaderElectionRecord
 	var err error
-	pl.p, err = pl.Client.Core().PersistentVolumeClaims(pl.PVCMeta.Namespace).Get(pl.PVCMeta.Name)
+	pl.p, err = pl.Client.Core().PersistentVolumeClaims(pl.PVCMeta.Namespace).Get(pl.PVCMeta.Name, meta_v1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
