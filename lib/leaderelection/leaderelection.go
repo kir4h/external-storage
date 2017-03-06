@@ -28,7 +28,7 @@ import (
 	"reflect"
 	"time"
 
-	rl "github.com/kubernetes-incubator/external-storage/lib/leaderelection/resourcelock"
+	rl "github.com/r2d4/external-storage/lib/leaderelection/resourcelock"
 	"k8s.io/client-go/pkg/api/errors"
 	"k8s.io/client-go/pkg/api/unversioned"
 	"k8s.io/client-go/pkg/util/runtime"

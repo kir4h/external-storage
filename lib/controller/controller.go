@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"github.com/kubernetes-incubator/external-storage/lib/leaderelection"
-	rl "github.com/kubernetes-incubator/external-storage/lib/leaderelection/resourcelock"
+	"github.com/r2d4/external-storage/lib/leaderelection"
+	rl "github.com/r2d4/external-storage/lib/leaderelection/resourcelock"
 	"k8s.io/client-go/kubernetes"
 	core_v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/pkg/api"
