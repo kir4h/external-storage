@@ -30,7 +30,7 @@ import (
 type ProvisionPVCLock struct {
 	// PVCMeta should contain a Name and a Namespace of a PVC
 	// object that the LeaderElector will attempt to lead.
-	PVCMeta    v1.ObjectMeta
+	PVCMeta    meta_v1.ObjectMeta
 	Client     clientset.Interface
 	LockConfig ResourceLockConfig
 	p          *v1.PersistentVolumeClaim
