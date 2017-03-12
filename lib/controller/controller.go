@@ -37,7 +37,7 @@ import (
 	core_v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/storage/v1beta1"
+	storage_v1 "k8s.io/client-go/pkg/apis/storage/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/util/goroutinemap"
@@ -236,7 +236,7 @@ func NewProvisionController(
 	controller.classes = cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc)
 	controller.classReflector = cache.NewReflector(
 		controller.classSource,
-		&v1beta1.StorageClass{},
+		&storage_v1.StorageClass{},
 		controller.classes,
 		resyncPeriod,
 	)
@@ -841,7 +841,7 @@ func (ctrl *ProvisionController) scheduleOperation(operationName string, operati
 	}
 }
 
-func (ctrl *ProvisionController) getStorageClass(name string) (*v1beta1.StorageClass, error) {
+func (ctrl *ProvisionController) getStorageClass(name string) (*storage_v1.StorageClass, error) {
 	classObj, found, err := ctrl.classes.GetByKey(name)
 	if err != nil {
 		return nil, fmt.Errorf("Error getting StorageClass %q: %v", name, err)
@@ -853,7 +853,7 @@ func (ctrl *ProvisionController) getStorageClass(name string) (*v1beta1.StorageC
 		//    found, it SHOULD report an error (by sending an event to the claim) and it
 		//    SHOULD retry periodically with step i.
 	}
-	storageClass, ok := classObj.(*v1beta1.StorageClass)
+	storageClass, ok := classObj.(*storage_v1.StorageClass)
 	if !ok {
 		return nil, fmt.Errorf("Cannot convert object to StorageClass: %+v", classObj)
 	}
