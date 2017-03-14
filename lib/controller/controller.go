@@ -882,10 +882,12 @@ func setAnnotation(obj *meta_v1.ObjectMeta, ann string, value string) {
 // Request for `nil` class is interpreted as request for class "",
 // i.e. for a classless PV.
 func getClaimClass(claim *v1.PersistentVolumeClaim) string {
-	// TODO: change to PersistentVolumeClaim.Spec.Class value when this
-	// attribute is introduced.
 	if class, found := claim.Annotations[annClass]; found {
 		return class
+	}
+
+	if claim.Spec.StorageClassName != nil {
+		return *claim.Spec.StorageClassName
 	}
 
 	return ""
