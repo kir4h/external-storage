@@ -166,6 +166,9 @@ func NewProvisionController(
 	gitVersion1dot5, _ := semver.Parse("1.5.0")
 	is1dot4 := gitVersion.LT(gitVersion1dot5)
 
+	// TODO(r2d4): GetReference fails otherwise
+	v1.AddToScheme(api.Scheme)
+
 	controller := &ProvisionController{
 		client:                        client,
 		resyncPeriod:                  resyncPeriod,
