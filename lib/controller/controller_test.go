@@ -25,26 +25,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r2d4/external-storage/lib/leaderelection"
 	rl "github.com/r2d4/external-storage/lib/leaderelection/resourcelock"
+	"k8s.io/api/core/v1"
+	storagebeta "k8s.io/api/storage/v1beta1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 	fakev1core "k8s.io/client-go/kubernetes/typed/core/v1/fake"
-	"k8s.io/client-go/pkg/api/resource"
-	"k8s.io/client-go/pkg/api/testapi"
-	"k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/storage/v1beta1"
-	"k8s.io/client-go/pkg/conversion"
-	"k8s.io/client-go/pkg/runtime"
-	"k8s.io/client-go/pkg/types"
-	"k8s.io/client-go/pkg/watch"
+	"k8s.io/client-go/pkg/api/v1/ref"
 	testclient "k8s.io/client-go/testing"
 	fcache "k8s.io/client-go/tools/cache/testing"
 )
 
 const (
-	resyncPeriod         = 100 * time.Millisecond
-	failedRetryThreshold = 5
+	resyncPeriod = 100 * time.Millisecond
 )
 
 // TODO clean this up, e.g. remove redundant params (provisionerName: "foo.bar/baz")
@@ -174,6 +174,19 @@ func TestController(t *testing.T) {
 				*newVolume("volume-1", v1.VolumeReleased, v1.PersistentVolumeReclaimDelete, map[string]string{annDynamicallyProvisioned: "foo.bar/baz"}),
 			},
 		},
+		{
+			name: "provision for claim-1 but not claim-2, because it is ignored",
+			objs: []runtime.Object{
+				newStorageClass("class-1", "foo.bar/baz"),
+				newClaim("claim-1", "uid-1-1", "class-1", "", nil),
+				newClaim("claim-2", "uid-1-2", "class-1", "", nil),
+			},
+			provisionerName: "foo.bar/baz",
+			provisioner:     newIgnoredProvisioner(),
+			expectedVolumes: []v1.PersistentVolume{
+				*newProvisionedVolume(newStorageClass("class-1", "foo.bar/baz"), newClaim("claim-1", "uid-1-1", "class-1", "", nil)),
+			},
+		},
 	}
 	for _, test := range tests {
 		client := fake.NewSimpleClientset(test.objs...)
@@ -182,14 +195,14 @@ func TestController(t *testing.T) {
 				client.Fake.PrependReactor(v, "persistentvolumes", test.reaction)
 			}
 		}
-		ctrl := newTestProvisionController(client, resyncPeriod, test.provisionerName, test.provisioner, "v1.5.0", false, failedRetryThreshold)
+		ctrl := newTestProvisionController(client, test.provisionerName, test.provisioner, "v1.5.0")
 		stopCh := make(chan struct{})
 		go ctrl.Run(stopCh)
 
 		time.Sleep(2 * resyncPeriod)
 		ctrl.runningOperations.Wait()
 
-		pvList, _ := client.Core().PersistentVolumes().List(v1.ListOptions{})
+		pvList, _ := client.Core().PersistentVolumes().List(metav1.ListOptions{})
 		if !reflect.DeepEqual(test.expectedVolumes, pvList.Items) {
 			t.Logf("test case: %s", test.name)
 			t.Errorf("expected PVs:\n %v\n but got:\n %v\n", test.expectedVolumes, pvList.Items)
@@ -245,8 +258,7 @@ func TestMultipleControllers(t *testing.T) {
 		ctrls := make([]*ProvisionController, test.numControllers)
 		stopChs := make([]chan struct{}, test.numControllers)
 		for i := 0; i < test.numControllers; i++ {
-			ctrls[i] = NewProvisionController(client, 15*time.Second, test.provisionerName, provisioner, "v1.5.0", false, failedRetryThreshold, leaderelection.DefaultLeaseDuration, leaderelection.DefaultRenewDeadline, leaderelection.DefaultRetryPeriod, leaderelection.DefaultTermLimit)
-			ctrls[i].createProvisionedPVInterval = 10 * time.Millisecond
+			ctrls[i] = NewProvisionController(client, test.provisionerName, provisioner, "v1.5.0", CreateProvisionedPVInterval(10*time.Millisecond))
 			ctrls[i].claimSource = claimSource
 			ctrls[i].claims.Add(newClaim("claim-1", "uid-1-1", "class-1", "", nil))
 			ctrls[i].classes.Add(newStorageClass("class-1", "foo.bar/baz"))
@@ -275,7 +287,7 @@ func TestShouldProvision(t *testing.T) {
 	tests := []struct {
 		name            string
 		provisionerName string
-		class           *v1beta1.StorageClass
+		class           *storagebeta.StorageClass
 		claim           *v1.PersistentVolumeClaim
 		expectedShould  bool
 	}{
@@ -307,14 +319,14 @@ func TestShouldProvision(t *testing.T) {
 			claim:           newClaim("claim-1", "1-1", "class-1", "", nil),
 			expectedShould:  false,
 		},
-		// Kubernetes 1.5 provisioning - annDynamicallyProvisioned is set
+		// Kubernetes 1.5 provisioning - annStorageProvisioner is set
 		// and only this annotation is evaluated
 		{
 			name:            "should provision 1.5",
 			provisionerName: "foo.bar/baz",
 			class:           newStorageClass("class-2", "abc.def/ghi"),
 			claim: newClaim("claim-1", "1-1", "class-1", "",
-				map[string]string{annDynamicallyProvisioned: "foo.bar/baz"}),
+				map[string]string{annStorageProvisioner: "foo.bar/baz"}),
 			expectedShould: true,
 		},
 		{
@@ -322,14 +334,14 @@ func TestShouldProvision(t *testing.T) {
 			provisionerName: "foo.bar/baz",
 			class:           newStorageClass("class-1", "foo.bar/baz"),
 			claim: newClaim("claim-1", "1-1", "class-1", "",
-				map[string]string{annDynamicallyProvisioned: "abc.def/ghi"}),
+				map[string]string{annStorageProvisioner: "abc.def/ghi"}),
 			expectedShould: false,
 		},
 	}
 	for _, test := range tests {
 		client := fake.NewSimpleClientset(test.claim)
 		provisioner := newTestProvisioner()
-		ctrl := newTestProvisionController(client, resyncPeriod, test.provisionerName, provisioner, "v1.5.0", false, failedRetryThreshold)
+		ctrl := newTestProvisionController(client, test.provisionerName, provisioner, "v1.5.0")
 
 		err := ctrl.classes.Add(test.class)
 		if err != nil {
@@ -399,7 +411,7 @@ func TestShouldDelete(t *testing.T) {
 	for _, test := range tests {
 		client := fake.NewSimpleClientset()
 		provisioner := newTestProvisioner()
-		ctrl := newTestProvisionController(client, resyncPeriod, test.provisionerName, provisioner, test.serverGitVersion, false, failedRetryThreshold)
+		ctrl := newTestProvisionController(client, test.provisionerName, provisioner, test.serverGitVersion)
 
 		should := ctrl.shouldDelete(test.volume)
 		if test.expectedShould != should {
@@ -444,7 +456,7 @@ func TestIsOnlyRecordUpdate(t *testing.T) {
 	for _, test := range tests {
 		client := fake.NewSimpleClientset()
 		provisioner := newTestProvisioner()
-		ctrl := newTestProvisionController(client, resyncPeriod, "foo.bar/baz", provisioner, "v1.5.0", false, failedRetryThreshold)
+		ctrl := newTestProvisionController(client, "foo.bar/baz", provisioner, "v1.5.0")
 
 		is, _ := ctrl.isOnlyRecordUpdate(test.old, test.new)
 		if test.expectedIs != is {
@@ -456,21 +468,28 @@ func TestIsOnlyRecordUpdate(t *testing.T) {
 
 func newTestProvisionController(
 	client kubernetes.Interface,
-	resyncPeriod time.Duration,
 	provisionerName string,
 	provisioner Provisioner,
 	serverGitVersion string,
-	exponentialBackOffOnError bool,
-	failedRetryThreshold int,
 ) *ProvisionController {
-	ctrl := NewProvisionController(client, resyncPeriod, provisionerName, provisioner, serverGitVersion, exponentialBackOffOnError, failedRetryThreshold, 2*resyncPeriod, resyncPeriod, resyncPeriod/2, 2*resyncPeriod)
-	ctrl.createProvisionedPVInterval = 10 * time.Millisecond
+	ctrl := NewProvisionController(
+		client,
+		provisionerName,
+		provisioner,
+		serverGitVersion,
+		ResyncPeriod(resyncPeriod),
+		ExponentialBackOffOnError(false),
+		CreateProvisionedPVInterval(10*time.Millisecond),
+		LeaseDuration(2*resyncPeriod),
+		RenewDeadline(resyncPeriod),
+		RetryPeriod(resyncPeriod/2),
+		TermLimit(2*resyncPeriod))
 	return ctrl
 }
 
-func newStorageClass(name, provisioner string) *v1beta1.StorageClass {
-	return &v1beta1.StorageClass{
-		ObjectMeta: v1.ObjectMeta{
+func newStorageClass(name, provisioner string) *storagebeta.StorageClass {
+	return &storagebeta.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 		Provisioner: provisioner,
@@ -479,13 +498,13 @@ func newStorageClass(name, provisioner string) *v1beta1.StorageClass {
 
 func newClaim(name, claimUID, provisioner, volumeName string, annotations map[string]string) *v1.PersistentVolumeClaim {
 	claim := &v1.PersistentVolumeClaim{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Namespace:       v1.NamespaceDefault,
 			UID:             types.UID(claimUID),
 			ResourceVersion: "0",
 			Annotations:     map[string]string{annClass: provisioner},
-			SelfLink:        testapi.Default.SelfLink("pvc", ""),
+			SelfLink:        "/api/v1/namespaces/" + v1.NamespaceDefault + "/persistentvolumeclaims/" + name,
 		},
 		Spec: v1.PersistentVolumeClaimSpec{
 			AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce, v1.ReadOnlyMany},
@@ -508,9 +527,10 @@ func newClaim(name, claimUID, provisioner, volumeName string, annotations map[st
 
 func newVolume(name string, phase v1.PersistentVolumePhase, policy v1.PersistentVolumeReclaimPolicy, annotations map[string]string) *v1.PersistentVolume {
 	pv := &v1.PersistentVolume{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Annotations: annotations,
+			SelfLink:    "/api/v1/persistentvolumes/" + name,
 		},
 		Spec: v1.PersistentVolumeSpec{
 			PersistentVolumeReclaimPolicy: policy,
@@ -536,7 +556,7 @@ func newVolume(name string, phase v1.PersistentVolumePhase, policy v1.Persistent
 
 // newProvisionedVolume returns the volume the test controller should provision for the
 // given claim with the given class
-func newProvisionedVolume(storageClass *v1beta1.StorageClass, claim *v1.PersistentVolumeClaim) *v1.PersistentVolume {
+func newProvisionedVolume(storageClass *storagebeta.StorageClass, claim *v1.PersistentVolumeClaim) *v1.PersistentVolume {
 	// pv.Spec MUST be set to match requirements in claim.Spec, especially access mode and PV size. The provisioned volume size MUST NOT be smaller than size requested in the claim, however it MAY be larger.
 	options := VolumeOptions{
 		PersistentVolumeReclaimPolicy: v1.PersistentVolumeReclaimDelete,
@@ -547,7 +567,8 @@ func newProvisionedVolume(storageClass *v1beta1.StorageClass, claim *v1.Persiste
 	volume, _ := newTestProvisioner().Provision(options)
 
 	// pv.Spec.ClaimRef MUST point to the claim that led to its creation (including the claim UID).
-	volume.Spec.ClaimRef, _ = v1.GetReference(claim)
+	v1.AddToScheme(scheme.Scheme)
+	volume.Spec.ClaimRef, _ = ref.GetReference(scheme.Scheme, claim)
 
 	// pv.Annotations["pv.kubernetes.io/provisioned-by"] MUST be set to name of the external provisioner. This provisioner will be used to delete the volume.
 	// pv.Annotations["volume.beta.kubernetes.io/storage-class"] MUST be set to name of the storage class requested by the claim.
@@ -580,7 +601,7 @@ func (p *testProvisioner) Provision(options VolumeOptions) (*v1.PersistentVolume
 	time.Sleep(50 * time.Millisecond)
 
 	pv := &v1.PersistentVolume{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: options.PVName,
 		},
 		Spec: v1.PersistentVolumeSpec{
@@ -621,6 +642,27 @@ func (p *badTestProvisioner) Provision(options VolumeOptions) (*v1.PersistentVol
 
 func (p *badTestProvisioner) Delete(volume *v1.PersistentVolume) error {
 	return errors.New("fake error")
+}
+
+func newIgnoredProvisioner() Provisioner {
+	return &ignoredProvisioner{}
+}
+
+type ignoredProvisioner struct {
+}
+
+var _ Provisioner = &ignoredProvisioner{}
+
+func (i *ignoredProvisioner) Provision(options VolumeOptions) (*v1.PersistentVolume, error) {
+	if options.PVC.Name == "claim-2" {
+		return nil, &IgnoredError{"Ignored"}
+	}
+
+	return newProvisionedVolume(newStorageClass("class-1", "foo.bar/baz"), newClaim("claim-1", "uid-1-1", "class-1", "", nil)), nil
+}
+
+func (i *ignoredProvisioner) Delete(volume *v1.PersistentVolume) error {
+	return nil
 }
 
 type claimReactor struct {

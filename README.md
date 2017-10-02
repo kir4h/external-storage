@@ -1,5 +1,5 @@
 # External Storage
-[![Build Status](https://travis-ci.org/kubernetes-incubator/external-storage.svg?branch=master)](https://travis-ci.org/kubernetes-incubator/external-storage)
+[![Build Status](https://travis-ci.org/r2d4/external-storage.svg?branch=master)](https://travis-ci.org/r2d4/external-storage)
 ## External Provisioners
 This repository houses community-maintained external provisioners plus a helper library for building them. Each provisioner is contained in its own directory so for information on how to use one, enter its directory and read its documentation. The library is contained in the `lib` directory.
 
@@ -11,12 +11,12 @@ External provisioners work just like in-tree dynamic PV provisioners. A `Storage
 ### How to use the library
 ```go
 import (
-  "github.com/kubernetes-incubator/external-storage/lib/controller"
+  "github.com/r2d4/external-storage/lib/controller"
 )
 ```
 You need to implement the `Provisioner` interface then pass your implementation to a `ProvisionController` and run the controller. The controller takes care of deciding when to call your implementation's `Provision` or `Delete`. The interface and controller are defined in the above package.
 
-You will want to import a specific version of the library to ensure compatibility with certain versions of Kubernetes and to avoid breaking changes. This repo will be tagged according to the library's version (individual provisioners will need to version themselves independently, e.g. by in their documentation pointing to Docker Hub and using Docker tags), so to keep track of releases, go to this repo's [releases page](https://github.com/kubernetes-incubator/external-storage/releases).
+You will want to import a specific version of the library to ensure compatibility with certain versions of Kubernetes and to avoid breaking changes. This repo will be tagged according to the library's version (individual provisioners will need to version themselves independently, e.g. by in their documentation pointing to Docker Hub and using Docker tags), so to keep track of releases, go to this repo's [releases page](https://github.com/r2d4/external-storage/releases).
 
 Note that because your provisioner needs to depend also on [client-go](https://github.com/kubernetes/client-go) and the library itself depends on a specific version of client-go, to avoid a dependency conflict you must ensure you use the exact same version of client-go as the library. You can check what version of client-go the library depends on by looking at its [glide.yaml](lib/glide.yaml).
 
